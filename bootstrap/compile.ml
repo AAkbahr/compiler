@@ -48,7 +48,8 @@ let compile out decl_list =
       | SET_VAR(s,e1) -> let a = List.assoc s rho in begin
           compile_expr e1 rho;
           Printf.ksprintf (add 2) "\tmovq\t%%rax, %s\n" a
-      end
+        end
+
       | SET_ARRAY(_) -> fail "SET_ARRAY"
       | CALL(_) -> fail "CALL"
       | OP1(_) -> fail "OP1"
@@ -64,7 +65,20 @@ let compile out decl_list =
           | S_ADD -> Printf.ksprintf (add 2) "\taddq\t%%r10, %%rax\n"
           | S_SUB -> Printf.ksprintf (add 2) "\tsubq\t%%r10, %%rax\n"
           | S_INDEX -> fail "S_INDEX"
-      end
+        end
+
+      | CMP(op, e1, e2) -> begin
+          compile_expr e2 rho;
+          Printf.ksprintf (add 2) "\tpushq\t%%rax\n";
+          compile_expr e1 rho;
+          Printf.ksprintf (add 2) "\tpopq\t%%r10\n";
+          let string_of_op op = match op with
+            | C_LT -> "l"
+            | C_LE -> "le"
+            | C_EQ -> "e"
+          in Printf.ksprintf (add 2) "\tcmpq\t%%r10, %%rax\n\tset%s\t%%al\n\tmovzbq\t%%al, %%rax\n" (string_of_op op)
+        end
+
       | _ -> fail "TODO"
 
     and add i s = tab.(i) <- tab.(i) ^ s
