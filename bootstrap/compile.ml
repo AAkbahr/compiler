@@ -23,14 +23,18 @@ let compile out decl_list =
     and compile_code c rho = match c with
       | CBLOCK(decl_list, lc_list) ->
         let rec declare decl_list rho stack = match decl_list with
-          | [] -> execute lc_list rho stack
-          | h::t -> fail "CBLOCK"
-        and execute lc_list rho stack = match lc_list with
+          | [] -> execute lc_list rho
+          | (CDECL(_,s))::t -> begin
+              Printf.ksprintf (add 2) "\tpushq\t$0\n";
+              declare t ((s, (string_of_int stack)^"(%rbp)")::rho) (stack-8)
+          end
+          | _ -> failwith "CFUN in CBLOCK not supposed to happen"
+        and execute lc_list rho = match lc_list with
           | [] -> ()
-          | (_,c)::t -> compile_code c rho
-        in declare decl_list rho 0
+          | (_,c)::t -> compile_code c rho; execute t rho
+        in declare decl_list rho (-8)
 
-      | CEXPR(le) -> fail "CEXPR"
+      | CEXPR(e) -> compile_expr e rho
       | CIF(cond, then_code, else_code) -> fail "CIF"
       | CWHILE(cond, exec) -> fail "CWHILE"
       | CRETURN(r) -> match r with
@@ -38,10 +42,13 @@ let compile out decl_list =
         | Some(e) -> compile_expr e rho
 
     and compile_expr e rho = match (e_of_expr e) with
-      | VAR(_) -> fail "VAR"
+      | VAR(s) -> let a = List.assoc s rho in Printf.ksprintf (add 2) "\tmovq\t%s, %%rax\n" a
       | CST(x) -> Printf.ksprintf (add 2) "\tmovq\t$%d, %%rax\n" x
       | STRING(_) -> fail "STR"
-      | SET_VAR(_) -> fail "SET_VAR"
+      | SET_VAR(s,e1) -> let a = List.assoc s rho in begin
+          compile_expr e1 rho;
+          Printf.ksprintf (add 2) "\tmovq\t%%rax, %s\n" a
+      end
       | SET_ARRAY(_) -> fail "SET_ARRAY"
       | CALL(_) -> fail "CALL"
       | OP1(_) -> fail "OP1"
