@@ -3,31 +3,58 @@ open Genlab
 
 let compile out decl_list =
   (* write prefixe *)
-  Printf.fprintf out "\t.file	\"ex1.c\"\n";
+  Printf.fprintf out "\t.file	\"%s\"\n" Cparse.(!cfile);
   (* main function *)
   let tab = Array.make 4 "" in begin
-    let rec compile_aux tab decl_list = match decl_list with
+    let rec compile_aux tab decl_list rho = match decl_list with
       | [] -> ()
-      | h::t -> begin match h with
-          | CDECL(_,s) -> write ("\t.comm\t" ^ s ^ ",4,4\n") 0
-          | CFUN(_,s,args,(_,c)) -> (* todo args *) compile_code c
-        end;
-        compile_aux tab t
+      | (CDECL(_,s))::t -> begin
+          Printf.ksprintf (add 0) "\t.comm\t%s,4,4\n" s;
+          compile_aux tab t ((s, s^"(%rip)")::rho)
+      end
+      | (CFUN(_,s,args,(_,c)))::t -> begin
+          Printf.ksprintf (add 2) "\t.globl\t%s\n\t.type\t%s, @function\n%s:\n\tpushq\t%%rbp\n\tmovq\t%%rsp, %%rbp\n" s s s;
+          (* todo args *)
+          compile_code c rho;
+          Printf.ksprintf (add 2) "\tleave\n\tret\n\t.size\t%s, .-%s\n" s s;
+          compile_aux tab t rho
+      end
 
-    and compile_code c = match c with
-      | CBLOCK(decl_list, lc_list) -> fail "CBLOCK"
+    and compile_code c rho = match c with
+      | CBLOCK(decl_list, lc_list) ->
+        let rec declare decl_list rho stack = match decl_list with
+          | [] -> execute lc_list rho stack
+          | h::t -> fail "CBLOCK"
+        and execute lc_list rho stack = match lc_list with
+          | [] -> ()
+          | (_,c)::t -> compile_code c rho
+        in declare decl_list rho 0
+
       | CEXPR(le) -> fail "CEXPR"
       | CIF(cond, then_code, else_code) -> fail "CIF"
       | CWHILE(cond, exec) -> fail "CWHILE"
-      | CRETURN(_) -> fail "CRETURN"
+      | CRETURN(r) -> match r with
+        | None -> ()
+        | Some(e) -> compile_expr e rho
 
-    and write s i = tab.(i) <- tab.(i) ^ s
+    and compile_expr e rho = match (e_of_expr e) with
+      | VAR(_) -> fail "VAR"
+      | CST(x) -> Printf.ksprintf (add 2) "\tmovq\t$%d, %%rax\n" x
+      | STRING(_) -> fail "STR"
+      | SET_VAR(_) -> fail "SET_VAR"
+      | SET_ARRAY(_) -> fail "SET_ARRAY"
+      | CALL(_) -> fail "CALL"
+      | _ -> fail "TODO"
+
+    and add i s = tab.(i) <- tab.(i) ^ s
 
     and fail m =
       let (s,a,b,c,d) = Cparse.getloc () in
-      Printf.fprintf stdout "%s > %s (%d,%d,%d,%d)\n" s m a b c d
+      Printf.printf "%s > %s (%d,%d,%d,%d)\n" s m a b c d
 
-    in compile_aux tab decl_list;
+    in compile_aux tab decl_list [];
+
+    Printf.ksprintf (add 0) "\t.text\n";
     (* write the main x86 code *)
     for i = 0 to 3 do Printf.fprintf out "%s" tab.(i) done
   end;
