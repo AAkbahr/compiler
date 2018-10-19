@@ -44,6 +44,20 @@ let compile out decl_list =
       | SET_VAR(_) -> fail "SET_VAR"
       | SET_ARRAY(_) -> fail "SET_ARRAY"
       | CALL(_) -> fail "CALL"
+      | OP1(_) -> fail "OP1"
+      | OP2(op, e1, e2) -> begin
+          compile_expr e2 rho;
+          Printf.ksprintf (add 2) "\tpushq\t%%rax\n";
+          compile_expr e1 rho;
+          Printf.ksprintf (add 2) "\tpopq\t%%r10\n";
+          match op with
+          | S_MUL -> Printf.ksprintf (add 2) "\timulq\t%%r10\n"
+          | S_DIV -> Printf.ksprintf (add 2) "\tcqto\n\tidivq\t%%r10\n"
+          | S_MOD -> Printf.ksprintf (add 2) "\tcqto\n\tidivq\t%%r10\n\tmovq\t%%rdx, %%rax\n"
+          | S_ADD -> Printf.ksprintf (add 2) "\taddq\t%%r10, %%rax\n"
+          | S_SUB -> Printf.ksprintf (add 2) "\tsubq\t%%r10, %%rax\n"
+          | S_INDEX -> fail "S_INDEX"
+      end
       | _ -> fail "TODO"
 
     and add i s = tab.(i) <- tab.(i) ^ s
