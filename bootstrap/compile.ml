@@ -52,7 +52,27 @@ let compile out decl_list =
 
       | SET_ARRAY(_) -> fail "SET_ARRAY"
       | CALL(_) -> fail "CALL"
-      | OP1(_) -> fail "OP1"
+      | OP1(op, e1) -> begin
+          compile_expr e1 rho;
+          match op with
+          | M_POST_INC -> begin
+              match (e_of_expr e1) with
+              | VAR(s) -> let a = List.assoc s rho in Printf.ksprintf (add 2) "\tmovq\t%s, %%rax\n\tincq\t%s\n" a a
+              | _ -> Printf.ksprintf (add 2) "\tincq\t%%rax\n"
+            end
+          | M_POST_DEC -> begin
+              match (e_of_expr e1) with
+              | VAR(s) -> let a = List.assoc s rho in Printf.ksprintf (add 2) "\tmovq\t%s, %%rax\n\tdecq\t%s\n" a a
+              | _ -> Printf.ksprintf (add 2) "\tdecq\t%%rax\n"
+            end
+          | _ -> let string_of_op op = match op with
+              | M_MINUS -> "negq"
+              | M_NOT -> "notq"
+              | M_PRE_INC -> "incq"
+              | M_PRE_DEC -> "decq"
+              | _ -> failwith "Matched above (just to avoid stupid warnings)"
+            in Printf.ksprintf (add 2) "\t%s\t%%rax\n" (string_of_op op)
+        end
       | OP2(op, e1, e2) -> begin
           compile_expr e2 rho;
           Printf.ksprintf (add 2) "\tpushq\t%%rax\n";
