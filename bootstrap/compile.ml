@@ -1,7 +1,9 @@
 open Cparse
 open Genlab
 
-let flag = ref 0
+let loop_flag = ref 0
+let str_flag = ref 0
+let str_env = ref []
 
 let compile out decl_list =
   (* write prefixe *)
@@ -35,28 +37,60 @@ let compile out decl_list =
 
       | CEXPR(e) -> compile_expr e rho
 
-      | CIF(cond, c1, c2) -> let i = !flag in begin
+      | CIF(cond, (_,c1), (_,c2)) -> let i = !loop_flag in begin
+          loop_flag := i + 2;
           compile_expr cond rho;
           Printf.ksprintf (add 2) "\tcmpq\t$0, %%rax\n\tje\t.L%d\n" i;
           compile_code c1 rho;
           Printf.ksprintf (add 2) "\tjmp\t.L%d\n.L%d:\n" (i+1) i;
           compile_code c2 rho;
-          Printf.ksprintf (add 2) ".L%d:\n" (i+1);
-          flag := i + 2
+          Printf.ksprintf (add 2) ".L%d:\n" (i+1)
         end
 
-      | CWHILE(cond, exec) -> fail "CWHILE"
-      | CRETURN(r) -> match r with
-        | None -> ()
-        | Some(e) -> compile_expr e rho
+      | CWHILE(cond, (_,exec)) -> let i = !loop_flag in begin
+          loop_flag := i + 2;
+          Printf.ksprintf (add 2) ".L%d:\n" i;
+          compile_expr cond rho;
+          Printf.ksprintf (add 2) "\tcmpq\t$0, %%rax\n\tje\t.L%d\n" (i+1);
+          compile_code exec rho;
+          Printf.ksprintf (add 2) "\tjmp\t.L%d\n.L%d:\n" i (i+1)
+        end
+
+      | CRETURN(r) -> begin
+          match r with
+          | None -> ()
+          | Some(e) -> compile_expr e rho;
+            Printf.ksprintf (add 2) "\tleave\n\tret\n"
+        end
+
 
     and compile_expr e rho = match (e_of_expr e) with
-      | VAR(s) -> let a = List.assoc s rho in Printf.ksprintf (add 2) "\tmovq\t%s, %%rax\n" a
+      | VAR(s) -> begin match (assoc_opt s rho) with
+          | Some(a) -> Printf.ksprintf (add 2) "\tmovq\t%s, %%rax\n" a
+          | None -> failwith "Trying to call unreferenced variable: %s" s
+        end
+
       | CST(x) -> Printf.ksprintf (add 2) "\tmovq\t$%d, %%rax\n" x
-      | STRING(_) -> fail "STR"
-      | SET_VAR(s,e1) -> let a = List.assoc s rho in begin
-          compile_expr e1 rho;
-          Printf.ksprintf (add 2) "\tmovq\t%%rax, %s\n" a
+
+      | STRING(s) -> let a_opt = assoc_opt s (!str_env) and i = (!str_flag) in begin
+          if i = 0 then Printf.ksprintf (add 0) "\t.section\t.rodata\n";
+          let string_address a_opt i s = match a_opt with
+            | Some(a) -> a
+            | None -> let a = Printf.sprintf ".LC%d" i in begin
+                str_flag := i+1;
+                Printf.ksprintf (add 0) "%s:\n\t.string\t\"%s\"\n" a s;
+                str_env := ((s, a))::(!str_env);
+                a
+              end
+          in Printf.ksprintf (add 2) "\tmovq\t%s, %%rax\n" (string_address a_opt i s)
+        end
+
+      | SET_VAR(s,e1) -> begin match (assoc_opt s rho) with
+          | Some(a) -> begin
+              compile_expr e1 rho;
+              Printf.ksprintf (add 2) "\tmovq\t%%rax, %s\n" a
+            end
+          | None -> failwith "Trying to set an unreferenced variable: %s" s
         end
 
       | SET_ARRAY(_) -> fail "SET_ARRAY"
@@ -110,17 +144,20 @@ let compile out decl_list =
           in Printf.ksprintf (add 2) "\tcmpq\t%%r10, %%rax\n\tset%s\t%%al\n\tmovzbq\t%%al, %%rax\n" (string_of_op op)
         end
 
-      | EIF(cond, e1, e2) -> let i = !flag in begin
+      | EIF(cond, e1, e2) -> let i = !loop_flag in begin
+          loop_flag := i + 2;
           compile_expr cond rho;
           Printf.ksprintf (add 2) "\tcmpq\t$0, %%rax\n\tje\t.L%d\n" i;
           compile_expr e1 rho;
           Printf.ksprintf (add 2) "\tjmp\t.L%d\n.L%d:\n" (i+1) i;
           compile_expr e2 rho;
-          Printf.ksprintf (add 2) ".L%d:\n" (i+1);
-          flag := i + 2
+          Printf.ksprintf (add 2) ".L%d:\n" (i+1)
         end
 
       | ESEQ(l) -> List.iter (fun ex -> compile_expr ex rho) l
+
+    and assoc_opt a l =
+      try Some(List.assoc a l) with Not_found -> None
 
     and add i s = tab.(i) <- tab.(i) ^ s
 
