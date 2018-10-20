@@ -1,6 +1,8 @@
 open Cparse
 open Genlab
 
+let flag = ref 0
+
 let compile out decl_list =
   (* write prefixe *)
   Printf.fprintf out "\t.file	\"%s\"\n" Cparse.(!cfile);
@@ -35,7 +37,17 @@ let compile out decl_list =
         in declare decl_list rho (-8)
 
       | CEXPR(e) -> compile_expr e rho
-      | CIF(cond, then_code, else_code) -> fail "CIF"
+
+      | CIF(cond, c1, c2) -> let i = !flag in begin
+          compile_expr cond rho;
+          Printf.ksprintf (add 2) "\tcmpq\t$0, %%rax\n\tje\t.L%d\n" i;
+          compile_code c1 rho;
+          Printf.ksprintf (add 2) "\tjmp\t.L%d\n.L%d:\n" (i+1) i;
+          compile_code c2 rho;
+          Printf.ksprintf (add 2) ".L%d:\n" (i+1);
+          flag := !flag + 2
+        end
+
       | CWHILE(cond, exec) -> fail "CWHILE"
       | CRETURN(r) -> match r with
         | None -> ()
@@ -58,12 +70,14 @@ let compile out decl_list =
           | M_POST_INC -> begin
               match (e_of_expr e1) with
               | VAR(s) -> let a = List.assoc s rho in Printf.ksprintf (add 2) "\tmovq\t%s, %%rax\n\tincq\t%s\n" a a
-              | _ -> Printf.ksprintf (add 2) "\tincq\t%%rax\n"
+              | OP2(S_INDEX, t, i) -> fail "INC_TAB"
+              | _ -> ()
             end
           | M_POST_DEC -> begin
               match (e_of_expr e1) with
               | VAR(s) -> let a = List.assoc s rho in Printf.ksprintf (add 2) "\tmovq\t%s, %%rax\n\tdecq\t%s\n" a a
-              | _ -> Printf.ksprintf (add 2) "\tdecq\t%%rax\n"
+              | OP2(S_INDEX, t, i) -> fail "DEC_TAB"
+              | _ -> ()
             end
           | _ -> let string_of_op op = match op with
               | M_MINUS -> "negq"
@@ -99,7 +113,17 @@ let compile out decl_list =
           in Printf.ksprintf (add 2) "\tcmpq\t%%r10, %%rax\n\tset%s\t%%al\n\tmovzbq\t%%al, %%rax\n" (string_of_op op)
         end
 
-      | _ -> fail "TODO"
+      | EIF(cond, e1, e2) -> let i = !flag in begin
+          compile_expr cond rho;
+          Printf.ksprintf (add 2) "\tcmpq\t$0, %%rax\n\tje\t.L%d\n" i;
+          compile_expr e1 rho;
+          Printf.ksprintf (add 2) "\tjmp\t.L%d\n.L%d:\n" (i+1) i;
+          compile_expr e2 rho;
+          Printf.ksprintf (add 2) ".L%d:\n" (i+1);
+          flag := !flag + 2
+        end
+
+      | ESEQ(l) -> List.iter (fun ex -> compile_expr ex rho) l
 
     and add i s = tab.(i) <- tab.(i) ^ s
 
