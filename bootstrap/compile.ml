@@ -25,15 +25,12 @@ let compile out decl_list =
     and compile_code c rho = match c with
       | CBLOCK(decl_list, lc_list) ->
         let rec declare decl_list rho stack = match decl_list with
-          | [] -> execute lc_list rho
+          | [] -> List.iter (fun (_,c) -> compile_code c rho) lc_list
           | (CDECL(_,s))::t -> begin
               Printf.ksprintf (add 2) "\tpushq\t$0\n";
-              declare t ((s, (string_of_int stack)^"(%rbp)")::rho) (stack-8)
+              declare t ((s, Printf.sprintf "%d(%%rbp)" stack)::rho) (stack-8)
           end
           | _ -> failwith "CFUN in CBLOCK not supposed to happen"
-        and execute lc_list rho = match lc_list with
-          | [] -> ()
-          | (_,c)::t -> compile_code c rho; execute t rho
         in declare decl_list rho (-8)
 
       | CEXPR(e) -> compile_expr e rho
@@ -45,7 +42,7 @@ let compile out decl_list =
           Printf.ksprintf (add 2) "\tjmp\t.L%d\n.L%d:\n" (i+1) i;
           compile_code c2 rho;
           Printf.ksprintf (add 2) ".L%d:\n" (i+1);
-          flag := !flag + 2
+          flag := i + 2
         end
 
       | CWHILE(cond, exec) -> fail "CWHILE"
@@ -120,7 +117,7 @@ let compile out decl_list =
           Printf.ksprintf (add 2) "\tjmp\t.L%d\n.L%d:\n" (i+1) i;
           compile_expr e2 rho;
           Printf.ksprintf (add 2) ".L%d:\n" (i+1);
-          flag := !flag + 2
+          flag := i + 2
         end
 
       | ESEQ(l) -> List.iter (fun ex -> compile_expr ex rho) l
