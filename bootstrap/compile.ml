@@ -18,22 +18,38 @@ let compile out decl_list =
       end
       | (CFUN(_,s,args,(_,c)))::t -> begin
           Printf.ksprintf (add 2) "\t.globl\t%s\n\t.type\t%s, @function\n%s:\n\tpushq\t%%rbp\n\tmovq\t%%rsp, %%rbp\n" s s s;
-          (* todo args *)
-          compile_code c rho;
-          Printf.ksprintf (add 2) "\tleave\n\tret\n\t.size\t%s, .-%s\n" s s;
-          compile_aux tab t rho
+
+          let rec add_args args regs i rho stack = match args with
+            | [] -> rho
+
+            | (CDECL(_,s))::t -> if i < 7 then begin
+                Printf.ksprintf (add 2) "\tpushq\t%s\n" regs.(i-1);
+                add_args t regs (i+1) ((s, Printf.sprintf "%d(%%rbp)" (-8*i))::rho) stack
+              end
+              else begin
+                Printf.ksprintf (add 2) "\tpushq\t%d(%%rbp)\n" (8*stack);
+                add_args t regs (i+1) ((s, Printf.sprintf "%d(%%rbp)" (-8*i))::rho) (stack+1)
+              end
+
+            | _ -> failwith "Only variable declaration can be arg of a function"
+
+          in let rho1 = add_args args [|"%rdi";"%rsi";"%rdx";"%rcx";"%r8";"%r9"|] 1 rho 2 in begin
+            compile_code c rho1;
+            Printf.ksprintf (add 2) "\tleave\n\tret\n\t.size\t%s, .-%s\n" s s;
+            compile_aux tab t rho
+          end
       end
 
     and compile_code c rho = match c with
       | CBLOCK(decl_list, lc_list) ->
         let rec declare decl_list rho stack = match decl_list with
-          | [] -> List.iter (fun (_,c) -> compile_code c rho) lc_list
+          | [] -> print_rho rho; List.iter (fun (_,c) -> compile_code c rho) lc_list
           | (CDECL(_,s))::t -> begin
               Printf.ksprintf (add 2) "\tpushq\t$0\n";
-              declare t ((s, Printf.sprintf "%d(%%rbp)" stack)::rho) (stack-8)
+              declare t ((s, Printf.sprintf "%d(%%rbp)" (-8*stack))::rho) (stack+1)
           end
           | _ -> failwith "CFUN in CBLOCK not supposed to happen"
-        in declare decl_list rho (-8)
+        in declare decl_list rho (List.length rho+1)
 
       | CEXPR(e) -> compile_expr e rho
 
@@ -67,7 +83,7 @@ let compile out decl_list =
     and compile_expr e rho = match (e_of_expr e) with
       | VAR(s) -> begin match (assoc_opt s rho) with
           | Some(a) -> Printf.ksprintf (add 2) "\tmovq\t%s, %%rax\n" a
-          | None -> failwith "Trying to call unreferenced variable: %s" s
+          | None -> Printf.ksprintf (add 2) "\tmovq\t%s(%%rip), %%rax\n" s
         end
 
       | CST(x) -> Printf.ksprintf (add 2) "\tmovq\t$%d, %%rax\n" x
@@ -82,7 +98,7 @@ let compile out decl_list =
                 str_env := ((s, a))::(!str_env);
                 a
               end
-          in Printf.ksprintf (add 2) "\tmovq\t%s, %%rax\n" (string_address a_opt i s)
+          in Printf.ksprintf (add 2) "\tmovq\t$%s, %%rax\n" (string_address a_opt i s)
         end
 
       | SET_VAR(s,e1) -> begin match (assoc_opt s rho) with
@@ -90,11 +106,21 @@ let compile out decl_list =
               compile_expr e1 rho;
               Printf.ksprintf (add 2) "\tmovq\t%%rax, %s\n" a
             end
-          | None -> failwith "Trying to set an unreferenced variable: %s" s
+          | None -> failwith ("Trying to set an unreferenced variable: " ^ s)
         end
 
       | SET_ARRAY(_) -> fail "SET_ARRAY"
-      | CALL(_) -> fail "CALL"
+
+      | CALL(f,args) -> let rec add_args f args regs i = match args with
+          | [] -> Printf.ksprintf (add 2) "\tmovq\t$0, %%rax\n\tcall\t%s\n" f
+          | h::t -> begin
+              compile_expr h rho;
+              if i > 6 then Printf.ksprintf (add 2) "\tpushq\t%%rax\n"
+              else Printf.ksprintf (add 2) "\tmovq\t%%rax, %s\n" regs.(i-1);
+              add_args f t regs (i-1)
+            end
+        in add_args f (List.rev args) [|"%rdi";"%rsi";"%rdx";"%rcx";"%r8";"%r9"|] (List.length args)
+
       | OP1(op, e1) -> begin
           compile_expr e1 rho;
           match op with
@@ -161,10 +187,15 @@ let compile out decl_list =
 
     and add i s = tab.(i) <- tab.(i) ^ s
 
+    and print_rho rho =
+      let rec aux rho acc = match rho with
+        | [] -> Printf.ksprintf (add 2) "%s] */\n" acc
+        | (s,a)::t -> aux t (Printf.sprintf "%s%s:%s; " acc s a)
+      in aux rho "/* ["
+
     and fail m =
       let (s,a,b,c,d) = Cparse.getloc () in
       Printf.printf "%s > %s (%d,%d,%d,%d)\n" s m a b c d
-
     in compile_aux tab decl_list [];
 
     Printf.ksprintf (add 0) "\t.text\n";
