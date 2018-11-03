@@ -49,7 +49,12 @@ let compile out decl_list =
               declare t ((s, Printf.sprintf "%d(%%rbp)" (-8*stack))::rho) (stack+1)
           end
           | _ -> failwith "CFUN in CBLOCK not supposed to happen"
-        in declare decl_list rho (List.length rho+1)
+
+        and local_size rho acc = match rho with
+          | [] -> acc
+          | h::t -> if contains (snd h) "(%rbp)" then local_size t (acc+1)
+            else local_size t acc
+        in declare decl_list rho (local_size rho 0 +1)
 
       | CEXPR(e) -> compile_expr e rho
 
@@ -186,6 +191,15 @@ let compile out decl_list =
       try Some(List.assoc a l) with Not_found -> None
 
     and add i s = tab.(i) <- tab.(i) ^ s
+
+    and contains s1 s2 =
+      let l1 = String.length s1 and l2 = String.length s2 in
+      let i = ref 0 and j = ref 0 in
+      while !i < l1 && !j < l2 do
+        if s1.[!i] = s2.[!j] then j := !j+1 else j := 0;
+        i := !i+1
+      done;
+      !j = l2
 
     and print_rho rho =
       let rec aux rho acc = match rho with
