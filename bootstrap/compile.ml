@@ -114,7 +114,21 @@ let compile out decl_list =
           | None -> failwith ("Trying to set an unreferenced variable: " ^ s)
         end
 
-      | SET_ARRAY(_) -> fail "SET_ARRAY"
+      | SET_ARRAY(t,i,e) -> begin match (assoc_opt t rho) with
+          | Some(a) -> begin
+              compile_expr e rho;
+              Printf.ksprintf (add 2) "\tpushq\t%%rax\n";
+              compile_expr i rho;
+              Printf.ksprintf (add 2) "\tpopq\t%%r13\n"; (* %r10 <- e *)
+              Printf.ksprintf (add 2) "\tmovq\t%%rax, %%r10\n"; (* %r13 <- i *)
+              Printf.ksprintf (add 2) "\tmovq\t%s, %%rax\n" a; (* %rax <- t *)
+              Printf.ksprintf (add 2) "\timulq\t$8, %%r10\n";
+              Printf.ksprintf (add 2) "\taddq\t%%r10, %%rax\n";
+              Printf.ksprintf (add 2) "\tmovq\t%%r13, (%%rax)\n";
+              Printf.ksprintf (add 2) "\tmovq\t%%r13, %%rax\n"
+            end
+          | None -> failwith ("Trying to set an unreferenced table: " ^ t)
+      end
 
       | CALL(f,args) -> let rec add_args f args regs i = match args with
           | [] -> Printf.ksprintf (add 2) "\tmovq\t$0, %%rax\n\tcall\t%s\n" f
@@ -129,26 +143,40 @@ let compile out decl_list =
       | OP1(op, e1) -> begin
           compile_expr e1 rho;
           match op with
-          | M_POST_INC -> begin
-              match (e_of_expr e1) with
-              | VAR(s) -> let a = List.assoc s rho in Printf.ksprintf (add 2) "\tmovq\t%s, %%rax\n\tincq\t%s\n" a a
-              | OP2(S_INDEX, t, i) -> fail "INC_TAB"
-              | _ -> ()
+          | M_MINUS -> Printf.ksprintf (add 2) "\tnegq\t%%rax\n"
+          | M_NOT -> Printf.ksprintf (add 2) "\tnotq\t%%rax\n"
+          | _ -> match (e_of_expr e1) with
+            | VAR(s) -> let a_opt = assoc_opt s rho in begin match a_opt with
+              | Some(a) -> begin match op with
+                | M_POST_INC -> Printf.ksprintf (add 2) "\tincq\t%s\n" a
+                | M_POST_DEC -> Printf.ksprintf (add 2) "\tdecq\t%s\n" a
+                | M_PRE_INC -> Printf.ksprintf (add 2) "\tincq\t%%rax\n\tincq\t%s\n" a
+                | M_PRE_DEC -> Printf.ksprintf (add 2) "\tdecq\t%%rax\n\tdecq\t%s\n" a
+                | _ -> failwith "Just to satisfy the compiler"
+              end
+              | None -> failwith ("Trying to inc an unreferenced var: " ^ s)
             end
-          | M_POST_DEC -> begin
-              match (e_of_expr e1) with
-              | VAR(s) -> let a = List.assoc s rho in Printf.ksprintf (add 2) "\tmovq\t%s, %%rax\n\tdecq\t%s\n" a a
-              | OP2(S_INDEX, t, i) -> fail "DEC_TAB"
-              | _ -> ()
+            | OP2(S_INDEX, t, i) -> begin
+                compile_expr i rho;
+                Printf.ksprintf (add 2) "\tpushq\t%%rax\n";
+                compile_expr t rho;
+                Printf.ksprintf (add 2) "\tpopq\t%%r10";
+                Printf.ksprintf (add 2) "\timulq\t$8, %%r10\n";
+                Printf.ksprintf (add 2) "\taddq\t%%rax, %%r10\n";
+                let inc = "\tincq(%%r10)\n" and dec = "\tdecq(%%r10)\n" and mov = "\tmovq\t(%%r10), %%rax\n" in
+                match op with
+                | M_POST_INC -> Printf.ksprintf (add 2) "%s%s" mov inc
+                | M_POST_DEC -> Printf.ksprintf (add 2) "%s%s" mov dec
+                | M_PRE_INC -> Printf.ksprintf (add 2) "%s%s" inc mov
+                | M_PRE_DEC -> Printf.ksprintf (add 2) "%s%s" dec mov
+                | _ -> failwith "Just to satisfy the compiler"
             end
-          | _ -> let string_of_op op = match op with
-              | M_MINUS -> "negq"
-              | M_NOT -> "notq"
-              | M_PRE_INC -> "incq"
-              | M_PRE_DEC -> "decq"
-              | _ -> failwith "Matched above (just to avoid stupid warnings)"
-            in Printf.ksprintf (add 2) "\t%s\t%%rax\n" (string_of_op op)
+            | _ -> match op with
+              | M_PRE_INC -> Printf.ksprintf (add 2) "\tincq\t%%rax\n"
+              | M_PRE_DEC -> Printf.ksprintf (add 2) "\tdecq\t%%rax\n"
+              | _ -> ()
         end
+
       | OP2(op, e1, e2) -> begin
           compile_expr e2 rho;
           Printf.ksprintf (add 2) "\tpushq\t%%rax\n";
@@ -160,7 +188,7 @@ let compile out decl_list =
           | S_MOD -> Printf.ksprintf (add 2) "\tcqto\n\tidivq\t%%r10\n\tmovq\t%%rdx, %%rax\n"
           | S_ADD -> Printf.ksprintf (add 2) "\taddq\t%%r10, %%rax\n"
           | S_SUB -> Printf.ksprintf (add 2) "\tsubq\t%%r10, %%rax\n"
-          | S_INDEX -> fail "S_INDEX"
+          | S_INDEX -> Printf.ksprintf (add 2) "\tmovq\t(%%rax,%%r10,8), %%rax\n"
         end
 
       | CMP(op, e1, e2) -> begin
@@ -207,9 +235,9 @@ let compile out decl_list =
         | (s,a)::t -> aux t (Printf.sprintf "%s%s:%s; " acc s a)
       in aux rho "/* ["
 
-    and fail m =
+    (* and fail m =
       let (s,a,b,c,d) = Cparse.getloc () in
-      Printf.printf "%s > %s (%d,%d,%d,%d)\n" s m a b c d
+       Printf.printf "%s > %s (%d,%d,%d,%d)\n" s m a b c d *)
     in compile_aux tab decl_list [];
 
     Printf.ksprintf (add 0) "\t.text\n";
