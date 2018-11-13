@@ -4,6 +4,7 @@ open Genlab
 let loop_flag = ref 0
 let str_flag = ref 0
 let str_env = ref []
+let fun_env = ref ["fopen";"malloc";"calloc";"realloc";"exit"]
 
 let compile out decl_list =
   (* write prefixe *)
@@ -18,6 +19,7 @@ let compile out decl_list =
       end
       | (CFUN(_,s,args,(_,c)))::t -> begin
           Printf.ksprintf (add 2) "\t.globl\t%s\n\t.type\t%s, @function\n%s:\n\tpushq\t%%rbp\n\tmovq\t%%rsp, %%rbp\n" s s s;
+          fun_env := s::(!fun_env);
 
           let rec add_args args regs i rho stack = match args with
             | [] -> rho
@@ -117,7 +119,10 @@ let compile out decl_list =
         end
 
       | CALL(f,args) -> let rec add_args f args regs i = match args with
-          | [] -> Printf.ksprintf (add 2) "\tmovq\t$0, %%rax\n\tcall\t%s\n" f
+          | [] -> begin
+              Printf.ksprintf (add 2) "\tmovq\t$0, %%rax\n\tcall\t%s\n" f;
+              if not (List.mem f (!fun_env)) then Printf.ksprintf (add 2) "\tmovslq\t%%eax, %%rax\n"
+            end
           | h::t -> begin
               compile_expr h rho;
               if i > 6 then Printf.ksprintf (add 2) "\tpushq\t%%rax\n"
