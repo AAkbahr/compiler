@@ -25,10 +25,12 @@ let compile out decl_list =
             | [] -> rho
 
             | (CDECL(_,s))::t -> if i < 7 then begin
+                (* the 6 first args are moved into specific registers *)
                 Printf.ksprintf (add 2) "\tpushq\t%s\n" regs.(i-1);
                 add_args t regs (i+1) ((s, Printf.sprintf "%d(%%rbp)" (-8*i))::rho) stack
               end
               else begin
+                (* the last args are pushed on the stack *)
                 Printf.ksprintf (add 2) "\tpushq\t%d(%%rbp)\n" (8*stack);
                 add_args t regs (i+1) ((s, Printf.sprintf "%d(%%rbp)" (-8*i))::rho) (stack+1)
               end
@@ -36,8 +38,11 @@ let compile out decl_list =
             | _ -> failwith "Only variable declaration can be arg of a function"
 
           in let rho = add_args args [|"%rdi";"%rsi";"%rdx";"%rcx";"%r8";"%r9"|] 1 [] 2 in begin
+            (* once args are added, we compile the code of the function... *)
             compile_code c rho;
+            (* ...we write the suffix of the function...*)
             Printf.ksprintf (add 2) "\tleave\n\tret\n\t.size\t%s, .-%s\n" s s;
+            (* ...and we finally compile the rest of the code *)
             compile_aux tab t
           end
       end
@@ -45,8 +50,14 @@ let compile out decl_list =
     and compile_code c rho = match c with
       | CBLOCK(decl_list, lc_list) ->
         let rec declare decl_list rho stack = match decl_list with
-          | [] -> print_rho rho; List.iter (fun (_,c) -> compile_code c rho) lc_list
+          | [] -> begin
+              (* the environment is printed in the assembly code (debug) *)
+              print_rho rho;
+              (* instructions are successively compiled *)
+              List.iter (fun (_,c) -> compile_code c rho) lc_list
+          end
           | (CDECL(_,s))::t -> begin
+              (* each variable is initialized to 0 and pushed on the stack *)
               Printf.ksprintf (add 2) "\tpushq\t$0\n";
               declare t ((s, Printf.sprintf "%d(%%rbp)" (-8*stack))::rho) (stack+1)
             end
@@ -58,8 +69,10 @@ let compile out decl_list =
       | CIF(cond, (_,c1), (_,c2)) -> let i = !loop_flag in begin
           loop_flag := i + 2;
           compile_expr cond rho;
+          (* if the condition is not satisfied, we skip instructions of c1 *)
           Printf.ksprintf (add 2) "\tcmpq\t$0, %%rax\n\tje\t.L%d\n" i;
           compile_code c1 rho;
+          (* if instructions of c1 are read, we skip instructions of c2 *)
           Printf.ksprintf (add 2) "\tjmp\t.L%d\n.L%d:\n" (i+1) i;
           compile_code c2 rho;
           Printf.ksprintf (add 2) ".L%d:\n" (i+1)
@@ -69,8 +82,10 @@ let compile out decl_list =
           loop_flag := i + 2;
           Printf.ksprintf (add 2) ".L%d:\n" i;
           compile_expr cond rho;
+          (* if cond is not satisfied, we jump after the instructions of exec *)
           Printf.ksprintf (add 2) "\tcmpq\t$0, %%rax\n\tje\t.L%d\n" (i+1);
           compile_code exec rho;
+          (* when exec has been read, we jump back to the evaluation of cond *)
           Printf.ksprintf (add 2) "\tjmp\t.L%d\n.L%d:\n" i (i+1)
         end
 
@@ -90,7 +105,9 @@ let compile out decl_list =
       | STRING(s) -> let a_opt = assoc_opt s (!str_env) and i = (!str_flag) in begin
           if i = 0 then Printf.ksprintf (add 1) "\t.section\t.rodata\n";
           let string_address a_opt i s = match a_opt with
+            (* if the string is already in str_env, its address is known *)
             | Some(a) -> a
+            (* otherwise we add it and write the necesary x86 code at the beginning of the file *)
             | None -> let a = Printf.sprintf ".LC%d" i in begin
                 str_flag := i+1;
                 Printf.ksprintf (add 1) "%s:\n\t.string\t\"%s\"\n" a (String.escaped s);
@@ -106,14 +123,21 @@ let compile out decl_list =
         end
 
       | SET_ARRAY(t,i,e) -> begin
+          (* we compile and push the expression e... *)
           compile_expr e rho;
           Printf.ksprintf (add 2) "\tpushq\t%%rax\n";
+          (* ...then we compile i... *)
           compile_expr i rho;
-          Printf.ksprintf (add 2) "\tpopq\t%%r13\n"; (* %r10 <- e *)
-          Printf.ksprintf (add 2) "\tmovq\t%%rax, %%r10\n"; (* %r13 <- i *)
-          Printf.ksprintf (add 2) "\tmovq\t%s, %%rax\n" (assoc_loc t rho); (* %rax <- t *)
+          (* ...we pop e in r%13... *)
+          Printf.ksprintf (add 2) "\tpopq\t%%r13\n";
+          (* ...and move i in r%10. *)
+          Printf.ksprintf (add 2) "\tmovq\t%%rax, %%r10\n";
+          (* now we move the address of t in %rax... *)
+          Printf.ksprintf (add 2) "\tmovq\t%s, %%rax\n" (assoc_loc t rho);
+          (* add 8*i to this address to get the address of t[i]... *)
           Printf.ksprintf (add 2) "\timulq\t$8, %%r10\n";
           Printf.ksprintf (add 2) "\taddq\t%%r10, %%rax\n";
+          (* ...and finally we move e to the address %rax points to *)
           Printf.ksprintf (add 2) "\tmovq\t%%r13, (%%rax)\n";
           Printf.ksprintf (add 2) "\tmovq\t%%r13, %%rax\n"
         end
@@ -166,10 +190,12 @@ let compile out decl_list =
         end
 
       | OP2(op, e1, e2) -> begin
+          (* e2 is evaluated first and saved in %r10 *)
           compile_expr e2 rho;
           Printf.ksprintf (add 2) "\tpushq\t%%rax\n";
           compile_expr e1 rho;
           Printf.ksprintf (add 2) "\tpopq\t%%r10\n";
+          (* at this step e1 is in %rax and e2 in %r10 *)
           match op with
           | S_MUL -> Printf.ksprintf (add 2) "\timulq\t%%r10\n"
           | S_DIV -> Printf.ksprintf (add 2) "\tcqto\n\tidivq\t%%r10\n"
@@ -211,15 +237,13 @@ let compile out decl_list =
 
     and add i s = tab.(i) <- tab.(i) ^ s
 
+    (* print the environment as a comment in the x86 code (debug) *)
     and print_rho rho =
       let rec aux rho acc = match rho with
         | [] -> Printf.ksprintf (add 2) "%s] */\n" acc
         | (s,a)::t -> aux t (Printf.sprintf "%s%s:%s; " acc s a)
       in aux rho "/* ["
 
-    (* and fail m =
-      let (s,a,b,c,d) = Cparse.getloc () in
-       Printf.printf "%s > %s (%d,%d,%d,%d)\n" s m a b c d *)
     in compile_aux tab decl_list;
 
     Printf.ksprintf (add 1) "\t.text\n";
