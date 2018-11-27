@@ -14,7 +14,7 @@ let compile out decl_list =
     let rec compile_aux tab decl_list = match decl_list with
       | [] -> ()
       | (CDECL(_,s))::t -> begin
-          Printf.ksprintf (add 0) "\t.comm\t%s,4,4\n" s;
+          Printf.ksprintf (add 0) "\t.comm\t%s,8,8\n" s;
           compile_aux tab t
       end
       | (CFUN(_,s,args,(_,c)))::t -> begin
@@ -88,12 +88,12 @@ let compile out decl_list =
       | CST(x) -> Printf.ksprintf (add 2) "\tmovq\t$%d, %%rax\n" x
 
       | STRING(s) -> let a_opt = assoc_opt s (!str_env) and i = (!str_flag) in begin
-          if i = 0 then Printf.ksprintf (add 0) "\t.section\t.rodata\n";
+          if i = 0 then Printf.ksprintf (add 1) "\t.section\t.rodata\n";
           let string_address a_opt i s = match a_opt with
             | Some(a) -> a
             | None -> let a = Printf.sprintf ".LC%d" i in begin
                 str_flag := i+1;
-                Printf.ksprintf (add 0) "%s:\n\t.string\t\"%s\"\n" a (String.escaped s);
+                Printf.ksprintf (add 1) "%s:\n\t.string\t\"%s\"\n" a (String.escaped s);
                 str_env := ((s, a))::(!str_env);
                 a
               end
@@ -142,7 +142,7 @@ let compile out decl_list =
                 | M_POST_DEC -> Printf.ksprintf (add 2) "\tdecq\t%s\n" a
                 | M_PRE_INC -> Printf.ksprintf (add 2) "\tincq\t%%rax\n\tincq\t%s\n" a
                 | M_PRE_DEC -> Printf.ksprintf (add 2) "\tdecq\t%%rax\n\tdecq\t%s\n" a
-                | _ -> failwith "Just to satisfy the compiler"
+                | _ -> failwith "Matched above"
               end
             | OP2(S_INDEX, t, i) -> begin
                 compile_expr i rho;
@@ -222,7 +222,7 @@ let compile out decl_list =
        Printf.printf "%s > %s (%d,%d,%d,%d)\n" s m a b c d *)
     in compile_aux tab decl_list;
 
-    Printf.ksprintf (add 0) "\t.text\n";
+    Printf.ksprintf (add 1) "\t.text\n";
     (* write the main x86 code *)
     for i = 0 to 3 do Printf.fprintf out "%s" tab.(i) done
   end;
