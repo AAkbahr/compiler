@@ -1,28 +1,28 @@
 %{
 
 (*
- * Copyright (c) 2005 by Laboratoire Spécification et Vérification
- * (LSV), UMR 8643 CNRS & ENS Cachan.
- * Written by Jean Goubault-Larrecq.  Derived from the csur project.
+ *	Copyright (c) 2005, 2006 by Laboratoire Spécification et Vérification (LSV),
+ *	UMR 8643 CNRS & ENS Cachan.
+ *	Written by Jean Goubault-Larrecq.  Derived from the csur project.
  *
- * Permission is granted to anyone to use this software for any
- * purpose on any computer system, and to redistribute it freely,
- * subject to the following restrictions:
+ *	Permission is granted to anyone to use this software for any
+ *	purpose on any computer system, and to redistribute it freely,
+ *	subject to the following restrictions:
  *
- * 1. Neither the author nor its employer is responsible for the
- *    consequences of use of this software, no matter how awful, even if
- *    they arise from defects in it.
+ *	1. Neither the author nor its employer is responsible for the consequences of use of
+ *		this software, no matter how awful, even if they arise
+ *		from defects in it.
  *
- * 2. The origin of this software must not be misrepresented, either
- *    by explicit claim or by omission.
+ *	2. The origin of this software must not be misrepresented, either
+ *		by explicit claim or by omission.
  *
- * 3. Altered versions must be plainly marked as such, and must not
- *    be misrepresented as being the original software.
+ *	3. Altered versions must be plainly marked as such, and must not
+ *		be misrepresented as being the original software.
  *
- * 4. This software is restricted to non-commercial use only.  Commercial
- *    use is subject to a specific license, obtainable from LSV.
+ *	4. This software is restricted to non-commercial use only.  Commercial
+ *		use is subject to a specific license, obtainable from LSV.
  * 
- *)
+*)
 
 (* Analyse syntaxique d'un sous-ensemble (tres) reduit de C.
  *)
@@ -53,6 +53,7 @@ let parse_error msg =
 %token STRUCT UNION ENUM ELLIPSIS EOF
 %token CASE DEFAULT IF ELSE SWITCH WHILE DO FOR GOTO CONTINUE BREAK RETURN
 %token ASM
+%token TRY CATCH FINALLY THROW
 
 %type <(Cparse.var_declaration list)> translation_unit
 
@@ -321,6 +322,10 @@ statement: compound_statement
             { $1 }
         | jump_statement       
             { $1 }
+        | throw_statement
+	    { $1 }
+        | try_statement
+	    { $1 }
 	    ;
 
 open_block : open_brace { $1 };
@@ -376,6 +381,30 @@ selection_statement
 	}
         ;
 
+trykw : TRY { getloc () };
+catch : CATCH { getloc () };
+finally : FINALLY { getloc () };
+
+catch_clause : catch OPEN_PAREN_CHR identifier identifier CLOSE_PAREN_CHR compound_statement
+    { sup_locator $1 (fst $6), (snd $3, snd $4, $6) }
+    ;
+
+/* Une catch_list est une liste inversee de catch_clause */
+catch_list : catch_clause { fst $1, [snd $1] }
+| catch_list catch_clause { sup_locator (fst $1) (fst $2), snd $2::snd $1 }
+;
+
+default_catch_list : catch_list { fst $1, List.rev (snd $1), None }
+| catch_list finally compound_statement { sup_locator (fst $1) (fst $3), List.rev (snd $1), Some $3 }
+| finally compound_statement { sup_locator $1 (fst $2), [], Some $2 }
+;
+
+try_statement :
+    trykw compound_statement default_catch_list { let loc, catches, final = $3 in
+    sup_locator $1 loc, CTRY ($2, catches, final) }
+	;
+
+
 whilekw : WHILE { getloc () };
 forkw : FOR { getloc () };
 
@@ -411,6 +440,13 @@ jump_statement:
         | return expression SEMI_CHR 
             { sup_locator $1 (loc_of_expr $2), CRETURN (Some $2) }
         ;
+
+throw : THROW { getloc () };
+
+throw_statement:
+	  throw identifier primary_expression { let _, s = $2 in
+	  let loc', e = $3 in sup_locator $1 loc', CTHROW (s, $3) }
+	    ;
 
 translation_unit:
           external_declaration 

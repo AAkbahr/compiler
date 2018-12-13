@@ -1,7 +1,7 @@
 {
 
 (*
- *	Copyright (c) 2005 by Laboratoire Spécification et Vérification (LSV),
+ *	Copyright (c) 2005, 2006 by Laboratoire Spécification et Vérification (LSV),
  *	UMR 8643 CNRS & ENS Cachan.
  *	Written by Jean Goubault-Larrecq.  Derived from the csur project.
  *
@@ -93,7 +93,7 @@ let is     = ['u' 'U' 'l' 'L']*
 
 rule ctoken = parse
     "/*" { count (Lexing.lexeme lexbuf); comment lexbuf; ctoken lexbuf }
-  | "//" { count (Lexing.lexeme lexbuf); inlcomment lexbuf; ctoken lexbuf }
+  | "//" [^ '\n']* '\n' { count (Lexing.lexeme lexbuf); ctoken lexbuf }
   | "auto" { count (Lexing.lexeme lexbuf); AUTO }
   | "break" { count (Lexing.lexeme lexbuf); BREAK }
   | "case" { count (Lexing.lexeme lexbuf); CASE }
@@ -126,6 +126,10 @@ rule ctoken = parse
   | "void" { count (Lexing.lexeme lexbuf); VOID }
   | "volatile" { count (Lexing.lexeme lexbuf); VOLATILE }
   | "while" { count (Lexing.lexeme lexbuf); WHILE }
+  | "try" { count (Lexing.lexeme lexbuf); TRY }
+  | "catch" { count (Lexing.lexeme lexbuf); CATCH }
+  | "finally" { count (Lexing.lexeme lexbuf); FINALLY }
+  | "throw" { count (Lexing.lexeme lexbuf); THROW }
   | letter (letter | digit)* { count (Lexing.lexeme lexbuf);
 		let yytext = Lexing.lexeme lexbuf in
 		    IDENTIFIER yytext
@@ -254,9 +258,6 @@ and comment = parse
     "*/" { count (Lexing.lexeme lexbuf) }
   | [^ '*']* { count (Lexing.lexeme lexbuf); comment lexbuf }
   | eof { fatal (Some (!cfile, !cline, !ccol, !cline, !ccol)) "end of file reached inside comment" }
-and inlcomment = parse
-    "\n" { count (Lexing.lexeme lexbuf) }
-  | [^ '\n']* { count (Lexing.lexeme lexbuf); inlcomment lexbuf }
 and string = parse
     '"' { () }
   | '\n'+ { string lexbuf }

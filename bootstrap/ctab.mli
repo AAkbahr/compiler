@@ -83,6 +83,10 @@ type token =
   | BREAK
   | RETURN
   | ASM
+  | TRY
+  | CATCH
+  | FINALLY
+  | THROW
 
 val translation_unit :
   (Lexing.lexbuf  -> token) -> Lexing.lexbuf -> (Cparse.var_declaration list)

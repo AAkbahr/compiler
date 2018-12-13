@@ -5,6 +5,7 @@ let loop_flag = ref 0
 let str_flag = ref 0
 let str_env = ref []
 let fun_env = ref ["fopen";"malloc";"calloc";"realloc";"exit"]
+let exn_env = ref []
 
 let compile out decl_list =
   (* write prefixe *)
@@ -95,6 +96,10 @@ let compile out decl_list =
           | Some(e) -> compile_expr e rho;
             Printf.ksprintf (add 2) "\tleave\n\tret\n"
         end
+
+      | CTHROW(s, e) -> failwith "TODO CTHROW"
+
+      | CTRY(try_c, catch, finally_c) -> failwith "TODO CTRY"
 
 
     and compile_expr e rho = match (e_of_expr e) with

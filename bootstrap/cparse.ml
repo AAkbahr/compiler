@@ -76,7 +76,12 @@ and code =
   | CIF of loc_expr * loc_code * loc_code (* if (e) c1; else c2; *)
   | CWHILE of loc_expr * loc_code (* while (e) c1; *)
   | CRETURN of loc_expr option (* return; ou return (e); *)
-
+  | CTHROW of string * loc_expr (* throw nom_exception (e); *)
+  | CTRY of (* try code [catch (nom_exception var) code]* [finally code]? *)
+    loc_code * (* le code juste après "try" *)
+    (string * string * loc_code) list * (* la liste des (nom_exception, var, code)
+					 pour chaque clause catch, dans l'ordre. *)
+    loc_code option (* la clause finally, si presente. *)
 
 let cline = ref 1
 let ccol = ref 0
