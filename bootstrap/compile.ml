@@ -57,7 +57,7 @@ let compile out decl_list =
 
           in let rho = add_args args [|"%rdi";"%rsi";"%rdx";"%rcx";"%r8";"%r9"|] 1 [] 2 in begin
             (* once args are added, we compile the code of the function... *)
-            compile_code c rho 0;
+            compile_code c rho 0 false;
             (* ...we write the suffix of the function...*)
             write 2 "\tleave\n\tret\n\t.size\t%s, .-%s\n" s s;
             (* ...and we finally compile the rest of the code *)
@@ -65,14 +65,14 @@ let compile out decl_list =
           end
       end
 
-    and compile_code c rho t_id = match c with
+    and compile_code c rho t_id f = match c with
       | CBLOCK(decl_list, lc_list) ->
         let rec declare decl_list rho stack = match decl_list with
           | [] -> begin
               (* the environment is printed in the assembly code (debug) *)
               print_rho rho;
               (* instructions are successively compiled *)
-              List.iter (fun (_,c) -> compile_code c rho t_id) lc_list;
+              List.iter (fun (_,c) -> compile_code c rho t_id f) lc_list;
               rho_saved := rho
           end
           | (CDECL(_,s))::t -> begin
@@ -90,10 +90,10 @@ let compile out decl_list =
           compile_expr cond rho t_id;
           (* if the condition is not satisfied, we skip instructions of c1 *)
           write 2 "\tcmpq\t$0, %%rax\n\tje\t.L%d\n" i;
-          compile_code c1 rho t_id;
+          compile_code c1 rho t_id f;
           (* if instructions of c1 are read, we skip instructions of c2 *)
           write 2 "\tjmp\t.L%d\n.L%d:\n" (i+1) i;
-          compile_code c2 rho t_id;
+          compile_code c2 rho t_id f;
           write 2 ".L%d:\n" (i+1)
         end
 
@@ -104,7 +104,7 @@ let compile out decl_list =
           (* if cond is not satisfied, we jump after the instructions of exec *)
           write 2 "\tcmpq\t$0, %%rax\n\tje\t.L%d\n" (i+1);
           rho_saved := rho;
-          compile_code exec rho t_id;
+          compile_code exec rho t_id f;
           (* we ensure that all variables pushed during the loop are popped before ending, to avoid segfaults in big loops *)
           clean_env rho;
           (* when exec has been read, we jump back to the evaluation of cond *)
@@ -116,6 +116,7 @@ let compile out decl_list =
           | None -> ()
           | Some(e) -> compile_expr e rho t_id;
             (* if the instruction is not in a try block, just leave ant ret *)
+            if f then write 2 "\tmovq\t$0, %%r14\n";
             if t_id = 0 then write 2 "\tleave\n\tret\n"
             (* otherwise save the returned value and jump to the finally *)
             else begin
@@ -139,7 +140,7 @@ let compile out decl_list =
       | CTRY((_,c), hl, fc) -> let i = !try_flag in begin
           try_flag := !try_flag + 1;
           rho_saved := rho;
-          compile_code c rho i;
+          compile_code c rho i false;
           (* if no exception is detected, jump directly to the finally *)
           write 2 "\tcmpq\t$1, %%r14\n\tjle\t.XF%d\n" i;
           write 2 ".XC%d:\n" i;
@@ -153,7 +154,7 @@ let compile out decl_list =
                 write 2 "\tmovq\t$0, %%r14\n";
                 (* get the value of the exception *)
                 write 2 "\tpushq\t%%r15\n";
-                compile_code c ((x, Printf.sprintf "-%d(%%rbp)" (8*(List.length rho + 1)))::rho) t_id;
+                compile_code c ((x, Printf.sprintf "-%d(%%rbp)" (8*(List.length rho + 1)))::rho) t_id f;
                 write 2 "\tpopq\t%%rax\n";
                 (* go directly to the finally statement *)
                 write 2 "\tjmp\t.XF%d\n" i;
@@ -163,7 +164,7 @@ let compile out decl_list =
           in catch_exn hl;
           write 2 ".XF%d:\n" i;
           let finally_exn fc = match fc with
-            | Some((_,c)) -> compile_code c rho t_id
+            | Some((_,c)) -> compile_code c rho t_id true
             | None -> ()
           in finally_exn fc;
           (* if there is no exception, no more things to do *)
