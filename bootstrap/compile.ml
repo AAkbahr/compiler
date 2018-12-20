@@ -65,14 +65,14 @@ let compile out decl_list =
           end
       end
 
-    and compile_code c rho t_id f = match c with
+    and compile_code c rho t_id fin = match c with
       | CBLOCK(decl_list, lc_list) ->
         let rec declare decl_list rho stack = match decl_list with
           | [] -> begin
               (* the environment is printed in the assembly code (debug) *)
               print_rho rho;
               (* instructions are successively compiled *)
-              List.iter (fun (_,c) -> compile_code c rho t_id f) lc_list;
+              List.iter (fun (_,c) -> compile_code c rho t_id fin) lc_list;
               rho_saved := rho
           end
           | (CDECL(_,s))::t -> begin
@@ -90,10 +90,10 @@ let compile out decl_list =
           compile_expr cond rho t_id;
           (* if the condition is not satisfied, we skip instructions of c1 *)
           write 2 "\tcmpq\t$0, %%rax\n\tje\t.L%d\n" i;
-          compile_code c1 rho t_id f;
+          compile_code c1 rho t_id fin;
           (* if instructions of c1 are read, we skip instructions of c2 *)
           write 2 "\tjmp\t.L%d\n.L%d:\n" (i+1) i;
-          compile_code c2 rho t_id f;
+          compile_code c2 rho t_id fin;
           write 2 ".L%d:\n" (i+1)
         end
 
@@ -104,7 +104,7 @@ let compile out decl_list =
           (* if cond is not satisfied, we jump after the instructions of exec *)
           write 2 "\tcmpq\t$0, %%rax\n\tje\t.L%d\n" (i+1);
           rho_saved := rho;
-          compile_code exec rho t_id f;
+          compile_code exec rho t_id fin;
           (* we ensure that all variables pushed during the loop are popped before ending, to avoid segfaults in big loops *)
           clean_env rho;
           (* when exec has been read, we jump back to the evaluation of cond *)
@@ -116,7 +116,7 @@ let compile out decl_list =
           | None -> ()
           | Some(e) -> compile_expr e rho t_id;
             (* if the instruction is not in a try block, just leave ant ret *)
-            if f then write 2 "\tmovq\t$0, %%r14\n";
+            if fin then write 2 "\tmovq\t$0, %%r14\n";
             if t_id = 0 then write 2 "\tleave\n\tret\n"
             (* otherwise save the returned value and jump to the finally *)
             else begin
@@ -154,7 +154,7 @@ let compile out decl_list =
                 write 2 "\tmovq\t$0, %%r14\n";
                 (* get the value of the exception *)
                 write 2 "\tpushq\t%%r15\n";
-                compile_code c ((x, Printf.sprintf "-%d(%%rbp)" (8*(List.length rho + 1)))::rho) t_id f;
+                compile_code c ((x, Printf.sprintf "-%d(%%rbp)" (8*(List.length rho + 1)))::rho) t_id fin;
                 write 2 "\tpopq\t%%rax\n";
                 (* go directly to the finally statement *)
                 write 2 "\tjmp\t.XF%d\n" i;
@@ -231,12 +231,16 @@ let compile out decl_list =
 
       | CALL(f,args) -> let rec add_args f args regs i = match args with
           | [] -> begin
+              write 2 "\tmovq\t%%r14, %%r12\n";
               write 2 "\tmovq\t$0, %%rax\n\tcall\t%s\n" f;
               if not (List.mem f (!fun_env)) then write 2 "\tmovslq\t%%eax, %%rax\n";
               (* exception handling *)
-              write 2 "\tcmpq\t$1, %%r14\n";
+              write 2 "\tsubq\t%%r14, %%r12\n";
+              write 2 "\tcmpq\t$0, %%r12\n";
+              write 2 "\tje\t.L%d\n" !loop_flag;
+              (* write 2 "\tcmpq\t$1, %%r14\n";
               (* if no exception handled, the following instructions are skipped *)
-              write 2 "\tjle\t.L%d\n" !loop_flag;
+              write 2 "\tjle\t.L%d\n" !loop_flag; *)
               if t_id = 0 then write 2 "\tleave\n\tret\n"
               else begin
                 clean_env rho;
