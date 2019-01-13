@@ -233,7 +233,7 @@ let compile out decl_list =
           | [] -> begin
               (* place args in the right registers *)
               for k = 0 to (min 5 (i-1)) do
-                write 2 "\tpopq\t%s\n" regs.(k)
+                 write 2 "\tpopq\t%s\n" regs.(k)
               done;
               (* call function *)
               write 2 "\tmovq\t%%r14, %%r12\n";
