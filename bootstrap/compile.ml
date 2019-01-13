@@ -231,6 +231,11 @@ let compile out decl_list =
 
       | CALL(f,args) -> let rec add_args f args regs i = match args with
           | [] -> begin
+              (* place args in the right registers *)
+              for k = 0 to (min 5 (i-1)) do
+                write 2 "\tpopq\t%s\n" regs.(k)
+              done;
+              (* call function *)
               write 2 "\tmovq\t%%r14, %%r12\n";
               write 2 "\tmovq\t$0, %%rax\n\tcall\t%s\n" f;
               if not (List.mem f (!fun_env)) then write 2 "\tmovslq\t%%eax, %%rax\n";
@@ -251,9 +256,8 @@ let compile out decl_list =
             end
           | h::t -> begin
               compile_expr h rho t_id;
-              if i > 6 then write 2 "\tpushq\t%%rax\n"
-              else write 2 "\tmovq\t%%rax, %s\n" regs.(i-1);
-              add_args f t regs (i-1)
+              write 2 "\tpushq\t%%rax\n";
+              add_args f t regs i
             end
         in add_args f (List.rev args) [|"%rdi";"%rsi";"%rdx";"%rcx";"%r8";"%r9"|] (List.length args)
 
